@@ -20,8 +20,8 @@ def parse_arguments():
     parser.add_argument(
         "--depth", "-d",
         type=int,
-        default=4,
-        help="Search depth (capped at 6 for practical performance)"
+        default=2,
+        help="Search depth in complete turns (player move + tile spawn) (capped at 6 for practical performance)"
     )
     
     parser.add_argument(
@@ -109,7 +109,10 @@ def main():
     # Determine which weights to use
     if args.weights:
         try:
-            weights = json.loads(args.weights)
+            custom_weights = json.loads(args.weights)
+            # Start with default weights and override with custom ones
+            weights = DEFAULT_WEIGHTS.copy()
+            weights.update(custom_weights)
             print("✅ Using custom weights from command line")
         except json.JSONDecodeError:
             print("❌ Invalid JSON in --weights argument")
@@ -124,7 +127,7 @@ def main():
     
     print("🚀 2048 Expectimax AI Demo (TUNABLE WEIGHTS)")
     print("=" * 65)
-    print(f"🔍 Search Depth: {min(args.depth, 6)} (capped for performance)")
+    print(f"🔍 Search Depth: {min(args.depth, 6)} complete turns (capped for performance)")
     print(f"🎲 Chance Samples: {args.chance_samples}")
     print(f"⏱️  Show Delay: {args.delay}s")
     print(f"🎯 Max Moves: {args.max_moves}")
