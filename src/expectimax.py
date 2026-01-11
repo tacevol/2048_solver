@@ -100,6 +100,49 @@ def _format_board(board: np.ndarray) -> str:
     return "\n".join(lines)
 
 
+def _move_moves_max_out_of_corner(board: np.ndarray, action_idx: int) -> bool:
+    """
+    Check if a move would move the max tile out of the corner.
+    Returns True if the max tile is currently in a corner but would not be after the move.
+    """
+    max_tile = np.max(board)
+    if max_tile == 0:
+        return False
+    
+    # Check if max tile is currently in a corner
+    corners = [(0, 0), (0, 3), (3, 0), (3, 3)]
+    max_tile_in_corner = False
+    for r, c in corners:
+        if board[r, c] == max_tile:
+            max_tile_in_corner = True
+            break
+    
+    if not max_tile_in_corner:
+        # Max tile is not in corner to begin with, so this check doesn't apply
+        return False
+    
+    # Preview the board after the move
+    nb = preview_after_move(board, action_idx)
+    
+    # Check if max tile (by value) is still in a corner after the move
+    new_max_tile = np.max(nb)
+    if new_max_tile > max_tile:
+        # A merge created a new max tile - check if it's in a corner
+        for r, c in corners:
+            if nb[r, c] == new_max_tile:
+                return False  # New max tile is in corner, so this is fine
+        return True  # New max tile is not in corner
+    elif new_max_tile == max_tile:
+        # Same max tile value - check if any max tile is in a corner
+        for r, c in corners:
+            if nb[r, c] == max_tile:
+                return False  # Max tile is still in a corner
+        return True  # Max tile moved out of corner
+    else:
+        # This shouldn't happen (max tile decreased), but handle it
+        return False
+
+
 def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, debug: bool = False, print_board: bool = True, path: str = "") -> float:
     """Tunable evaluation function with configurable weights"""
     if weights is None:
@@ -333,11 +376,31 @@ def expectimax_best_action_tunable(board: np.ndarray, depth: int = 4, chance_sam
     if not valid_actions:
         return 0
 
-    best_action = valid_actions[0]
+    # Filter out moves that would move max tile out of corner
+    # UNLESS it's the only legal move
+    safe_actions = []
+    for a in valid_actions:
+        nb = preview_after_move(board, a)
+        if np.array_equal(nb, board):
+            continue  # Skip moves with no effect
+        if not _move_moves_max_out_of_corner(board, a):
+            safe_actions.append(a)
+    
+    # If we have safe actions, use only those; otherwise use all valid actions
+    actions_to_consider = safe_actions if safe_actions else valid_actions
+    
+    if debug and not path and safe_actions != valid_actions:
+        excluded = set(valid_actions) - set(safe_actions)
+        excluded_dirs = [directions[a].upper() for a in excluded]
+        print(f"  ⚠️  Excluding moves that move max tile out of corner: {', '.join(excluded_dirs)}")
+        print(f"  ✓ Considering moves: {', '.join([directions[a].upper() for a in actions_to_consider])}")
+        print()
+    
+    best_action = actions_to_consider[0]
     best_val = -1e9
     
     # Use effective_depth instead of depth
-    for action_idx, a in enumerate(valid_actions, 1):
+    for action_idx, a in enumerate(actions_to_consider, 1):
         direction = directions[a].upper()
         action_path = str(action_idx) if not path else f"{path}.{action_idx}"
         
