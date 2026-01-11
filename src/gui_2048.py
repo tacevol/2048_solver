@@ -2,7 +2,7 @@ import math
 import sys
 import pygame
 from typing import Dict, Tuple, Optional, List
-from animation_layer import AnimatedGame2048, MoveEvent, MergeEvent, SpawnEvent
+from .animation_layer import AnimatedGame2048, MoveEvent, MergeEvent, SpawnEvent
 
 # ------------------------
 # Config

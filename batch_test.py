@@ -27,39 +27,28 @@ def run_single_game(weights, depth=2, chance_samples=8, max_moves=2000, debug=Fa
             print(f"\n{'='*70}")
             print(f"MOVE {move_count + 1}")
             print(f"{'='*70}")
-            print(f"\nCurrent board state:")
             print(_format_board(game.board))
             print(f"Score: {game.score}")
-            print(f"\n{'─'*70}")
-            print("Evaluating possible moves...")
-            print(f"{'─'*70}")
         
         best_action = expectimax_best_action_tunable(
             game.board, 
             depth=depth, 
             chance_sample_k=chance_samples,
             weights=weights,
-            debug=debug
+            debug=False  # Suppress internal debug output
         )
         
         directions = ['up', 'down', 'left', 'right']
         direction = directions[best_action]
         
         if debug:
-            print(f"\n{'='*70}")
-            print(f"EXECUTING MOVE: {direction.upper()}")
-            print(f"{'='*70}")
+            print(f"\nSelected move: {direction.upper()}")
         
         success = game.move(direction)
         if not success:
             if debug:
                 print("❌ Move failed! (Game over)")
             break
-        
-        if debug:
-            print(f"\nBoard after move (including spawned tile):")
-            print(_format_board(game.board))
-            print(f"Score: {game.score}")
         
         move_count += 1
     
@@ -90,7 +79,7 @@ def batch_test_weights(weights, num_games=50, depth=2, chance_samples=8, max_mov
     
     # Use all but n cores for thermal protection
     total_cores = mp.cpu_count()
-    num_processes = total_cores - 4 # 20 cores total, use only 16 for thermal safety
+    num_processes = total_cores - 2 # 20 cores total, use only 16 for thermal safety
     
     if debug:
         # In debug mode, run single-threaded for cleaner output

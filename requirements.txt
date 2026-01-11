@@ -5,3 +5,4 @@ gymnasium
 matplotlib
 plotly
 sb3-contrib
+tqdm

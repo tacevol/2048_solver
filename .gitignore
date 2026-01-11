@@ -29,6 +29,7 @@ dqn_*_sb3.zip
 reward_sweep_analysis.png
 profile_stats
 *.html
+archive/
 
 # Installer logs
 pip-log.txt
@@ -49,3 +50,6 @@ coverage.xml
 
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints
+
+demonstrations/
+imitation_learning/

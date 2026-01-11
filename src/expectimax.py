@@ -79,7 +79,7 @@ def preview_after_move(board: np.ndarray, action_idx: int) -> np.ndarray:
             out.append(0)
         return np.array(out, dtype=int)
     
-    # Transform board for left-merge computation
+    # Transforaard for left-merge computation
     vboard, rotated = _transform(board.copy(), direction)
     
     # Process each row
@@ -105,16 +105,34 @@ def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, 
     if weights is None:
         weights = DEFAULT_WEIGHTS.copy()
     
+    # Check for dead board (no legal moves) - apply VERY high penalty
+    valid_mask = get_valid_action_mask_for_board(board)
+    if not np.any(valid_mask):
+        # Dead board - return a very high negative penalty to avoid this state
+        # This should dominate all other evaluation factors
+        dead_board_penalty = -100000.0
+        if debug:
+            path_depth = len(path.split('.')) if path else 0
+            indent = "  " * path_depth
+            path_str = f"{path}: " if path else ""
+            print(f"{indent}    {path_str}EVALUATING BOARD (score={dead_board_penalty:.2f}) [DEAD BOARD - NO LEGAL MOVES]")
+            if print_board:
+                print(_format_board(board))
+            print()
+        return dead_board_penalty
+    
     # Basic metrics
     empties = np.count_nonzero(board == 0)
     max_tile = np.max(board)
     
-    # Strategic positioning
+    # Strategic positioning - bonus scales with max tile value to reward creating larger max tiles
     corner_bonus = 0.0
     if max_tile > 0:
         corners = [board[0, 0], board[0, 3], board[3, 0], board[3, 3]]
         if max_tile in corners:
-            corner_bonus = weights['corner_bonus']
+            # Scale bonus by max tile value (normalized by 4, so 4->1.0, 8->2.0, 16->4.0, etc.)
+            # This rewards creating larger max tiles in the corner
+            corner_bonus = weights['corner_bonus'] * (max_tile / 4.0)
     
     # Snake pattern bonus (classic 2048 strategy)
     snake_bonus = 0.0
@@ -133,21 +151,31 @@ def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, 
             if non_zero[i] >= non_zero[i + 1]:
                 snake_bonus += weights['snake_pattern']
     
-    # Monotonicity (improved)
+    # Monotonicity - rewards longer contiguous sequences (strong monotonicity in one direction)
     def mono_score(arr: np.ndarray) -> float:
         s = 0.0
-        # Row monotonicity
+        # Row monotonicity - reward longer contiguous sequences quadratically
         for r in range(4):
             row = arr[r, :]
+            seq_length = 0
             for i in range(3):
                 if row[i] >= row[i + 1] and row[i] > 0:
-                    s += 1.0
-        # Column monotonicity
+                    seq_length += 1
+                    # Quadratic reward: sequence of length n contributes n² (1, 4, 9, 16...)
+                    # This strongly favors longer sequences over many short ones
+                    s += seq_length * seq_length
+                else:
+                    seq_length = 0  # Reset on break in monotonicity
+        # Column monotonicity - reward longer contiguous sequences quadratically
         for c in range(4):
             col = arr[:, c]
+            seq_length = 0
             for i in range(3):
                 if col[i] >= col[i + 1] and col[i] > 0:
-                    s += 1.0
+                    seq_length += 1
+                    s += seq_length * seq_length
+                else:
+                    seq_length = 0  # Reset on break in monotonicity
         return s * weights['monotonicity']
     
     # Smoothness (improved)
@@ -170,7 +198,7 @@ def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, 
         
         return smooth
     
-    # Merge potential bonus
+    # Merge potential bonus (rewards FUTURE merge opportunities)
     merge_potential = 0.0
     for r in range(4):
         for c in range(3):
@@ -180,6 +208,30 @@ def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, 
         for r in range(3):
             if board[r, c] > 0 and board[r, c] == board[r + 1, c]:
                 merge_potential += board[r, c] * weights['merge_potential']
+    
+    # Merge execution bonus - rewards high-value tiles in strategic positions
+    # This compensates for merge_potential's bias toward keeping merges available
+    merge_execution_bonus = 0.0
+    if max_tile > 0:
+        # Find max tile position
+        max_pos = np.unravel_index(np.argmax(board), board.shape)
+        max_r, max_c = max_pos
+        
+        # Reward high-value tiles adjacent to the max tile (likely from merges)
+        # This rewards merges that create tiles near the max tile
+        adjacent_positions = [
+            (max_r - 1, max_c), (max_r + 1, max_c),
+            (max_r, max_c - 1), (max_r, max_c + 1)
+        ]
+        for r, c in adjacent_positions:
+            if 0 <= r < 4 and 0 <= c < 4 and board[r, c] > 0:
+                # Reward tiles that are large (likely from merges)
+                # Scale by tile value, with extra bonus if in corner
+                tile_value = board[r, c]
+                bonus = tile_value * 0.1  # Base bonus for high-value adjacent tile
+                if (r, c) in [(0, 0), (0, 3), (3, 0), (3, 3)]:
+                    bonus *= 1.5  # Extra bonus if the merged tile is in a corner
+                merge_execution_bonus += bonus
     
     # Max tile bonus (optional)
     max_tile_bonus = 0.0
@@ -212,7 +264,8 @@ def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, 
         snake_bonus +                           # Snake pattern
         mono_score(board) +                     # Monotonicity
         smooth_score(board) +                   # Smoothness
-        merge_potential +                       # Immediate merge opportunities
+        merge_potential +                       # Immediate merge opportunities (future)
+        merge_execution_bonus +                 # Merge execution bonus (reward completed merges)
         max_tile_bonus +                        # Max tile bonus
         edge_bonus -                            # Edge bonus
         corner_stability_penalty                # Corner stability penalty (subtracted)
@@ -231,13 +284,44 @@ def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, 
 
 
 def expectimax_best_action_tunable(board: np.ndarray, depth: int = 4, chance_sample_k: int = 8, 
-                                  weights: Dict[str, float] = None, debug: bool = False, path: str = "") -> int:
-    """Tunable expectimax with configurable evaluation weights"""
+                                  weights: Dict[str, float] = None, debug: bool = False, path: str = "",
+                                  adaptive_depth: bool = False) -> int:
+    """
+    Tunable expectimax with configurable evaluation weights.
+    
+    Args:
+        board: 4x4 game board
+        depth: Base search depth (adjusted adaptively if adaptive_depth=True)
+        chance_sample_k: Number of chance node samples
+        weights: Evaluation function weights
+        debug: Enable debug output
+        path: Debug path string
+        adaptive_depth: If True, increase depth for endgame (max_tile > 1024) and sparse boards
+    
+    Returns:
+        Best action (0=up, 1=down, 2=left, 3=right)
+    """
     if weights is None:
         weights = DEFAULT_WEIGHTS.copy()
     
+    # Adaptive depth: increase depth only in very late game when it's critical
+    if adaptive_depth:
+        max_tile = np.max(board)
+        empty_spaces = np.count_nonzero(board == 0)
+        
+        # Stay at baseline depth (2) unless we've reached 4096 AND board is sparse
+        # This prevents the exponential slowdown during normal gameplay
+        if max_tile >= 4096 and empty_spaces < 4:
+            # Only increase depth when trying to merge 4096s (very late endgame)
+            effective_depth = min(depth + 1, 4)  # Add 1 depth, cap at 4
+        else:
+            # Normal gameplay: use baseline depth (2)
+            effective_depth = depth
+    else:
+        effective_depth = depth
+    
     # Limit depth to reasonable values
-    depth = min(depth, 6)  # Cap at depth 6 for practical performance
+    effective_depth = min(effective_depth, 6)  # Cap at depth 6 for practical performance
     
     # Don't print headers here - the move header is printed in batch_test.py
     # This function just does the tree search
@@ -252,6 +336,7 @@ def expectimax_best_action_tunable(board: np.ndarray, depth: int = 4, chance_sam
     best_action = valid_actions[0]
     best_val = -1e9
     
+    # Use effective_depth instead of depth
     for action_idx, a in enumerate(valid_actions, 1):
         direction = directions[a].upper()
         action_path = str(action_idx) if not path else f"{path}.{action_idx}"
@@ -285,8 +370,8 @@ def expectimax_best_action_tunable(board: np.ndarray, depth: int = 4, chance_sam
                     print()
             print()
         
-        # Call chance node with full depth (not depth-1)
-        val = chance_value_tunable(nb, depth, chance_sample_k, weights, debug=debug, path=action_path)
+        # Call chance node with effective depth
+        val = chance_value_tunable(nb, effective_depth, chance_sample_k, weights, debug=debug, path=action_path)
             
         if debug:
             if not path:  # Root level - clear value display
@@ -339,8 +424,10 @@ def chance_value_tunable(b: np.ndarray, d: int, chance_sample_k: int, weights: D
         nb = b.copy()
         nb[r, c] = tile
         
+        # Define chance_path for path tracking (used even when debug=False)
+        chance_path = f"{path}.C" if path else "C"
+        
         if debug:
-            chance_path = f"{path}.C" if path else "C"
             print(f"{indent}[L{d}] {chance_path}: Chance node (depth=0) - Spawning {tile} at position ({r},{c})")
             print(_format_board(nb))
             print()
@@ -358,32 +445,40 @@ def chance_value_tunable(b: np.ndarray, d: int, chance_sample_k: int, weights: D
             print(f"{indent}[L{d}] {chance_path}: Chance node - No empty spaces, evaluating board")
         return evaluate_board_tunable(b, weights, debug=debug, print_board=False, path=path)
     
-    # Pick one random empty position
-    empty_idx = np.random.choice(len(empties))
-    r, c = empties[empty_idx]
+    # Use consistent sampling (baseline behavior - no adaptive doubling)
+    num_samples = chance_sample_k
     
-    # Pick one random tile type (weighted by probability)
+    # Sample multiple tile spawn outcomes and compute expected value using Monte Carlo
+    # This is the proper expectimax approach: average over sampled outcomes
+    total_value = 0.0
+    num_empty = len(empties)
     tile_probs = [p for _, p in tile_options]
     tile_vals = [tile for tile, _ in tile_options]
-    tile = np.random.choice(tile_vals, p=tile_probs)
     
-    nb = b.copy()
-    nb[r, c] = tile
+    # Sample num_samples outcomes and average their values
+    # Each sample represents one possible tile spawn (position + tile type)
+    for _ in range(num_samples):
+        # Pick one random empty position (uniform probability)
+        empty_idx = np.random.choice(num_empty)
+        r, c = empties[empty_idx]
+        
+        # Pick one random tile type (weighted by probability: 2 with 0.9, 4 with 0.1 if applicable)
+        tile = np.random.choice(tile_vals, p=tile_probs)
+        
+        nb = b.copy()
+        nb[r, c] = tile
+        
+        # Evaluate this outcome (recursively)
+        outcome_value = max_value_tunable(nb, d, chance_sample_k, weights, debug=False, path="")
+        total_value += outcome_value
     
+    # Return expected value (Monte Carlo estimate: average of samples)
+    expected_value = total_value / num_samples
     if debug:
         chance_path = f"{path}.C" if path else "C"
-        print(f"{indent}[L{d}] {chance_path}: Chance node (depth={d}) - Spawning {tile} at position ({r},{c})")
-        print(f"{indent}Current board:")
-        print(_format_board(b))
-        print(f"{indent}Board after spawn:")
-        print(_format_board(nb))
-        print()
-    
-    # After tile spawn, it's the player's turn again
-    result = max_value_tunable(nb, d, chance_sample_k, weights, debug=debug, path=chance_path)
-    if debug:
-        print(f"{indent}[L{d}] {chance_path}: Chance node result: {result:.2f}")
-    return result
+        tile_info = f"tile types {tile_vals}"
+        print(f"{indent}[L{d}] {chance_path}: Chance node (depth={d}) - Expected value: {expected_value:.2f} (from {num_samples} samples, {tile_info})")
+    return expected_value
 
 
 def max_value_tunable(b: np.ndarray, d: int, chance_sample_k: int, weights: Dict[str, float], debug: bool = False, path: str = "") -> float:
@@ -448,6 +543,7 @@ def max_value_tunable(b: np.ndarray, d: int, chance_sample_k: int, weights: Dict
                 print()
         
         # After player move, we go to chance node (tile spawn)
+        # Use effective_depth for recursive calls
         val = chance_value_tunable(nb, d - 1, chance_sample_k, weights, debug=debug, path=action_path)
         if debug:
             print(f"{action_indent}[L{d}] {action_path}: Action {direction} value: {val:.2f}")

@@ -38,7 +38,7 @@ CONFIGS = {
         'snake_pattern': 2.0,
         'monotonicity': 0.5,
         'smoothness': 0.1,
-        'merge_potential': 0.1,
+        'merge_potential': 0.3,  # Increased to prioritize merges that keep max tile in corner
         'max_tile_bonus': 0.0,
         'edge_bonus': 0.0
     },
@@ -55,6 +55,28 @@ CONFIGS = {
     },
     'CS 2.75': {
         'empty_spaces': 2.0,
+        'corner_bonus': 8.0,
+        'corner_stability': 2.75,
+        'snake_pattern': 2.0,
+        'monotonicity': 0.5,
+        'smoothness': 0.1,
+        'merge_potential': 0.1,
+        'max_tile_bonus': 0.0,
+        'edge_bonus': 0.0
+    },
+    'ES 2.75 (Best)': {
+        'empty_spaces': 2.75,  # Optimal from ES validation (250 games) - 29.2% 2048 rate
+        'corner_bonus': 8.0,
+        'corner_stability': 2.75,
+        'snake_pattern': 2.0,
+        'monotonicity': 0.5,
+        'smoothness': 0.1,
+        'merge_potential': 0.1,
+        'max_tile_bonus': 0.0,
+        'edge_bonus': 0.0
+    },
+    'ES 2.25 (Alternative)': {
+        'empty_spaces': 2.25,  # Also very good - 28.4% 2048 rate (not statistically different)
         'corner_bonus': 8.0,
         'corner_stability': 2.75,
         'snake_pattern': 2.0,
