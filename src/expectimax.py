@@ -177,22 +177,77 @@ def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, 
             # This rewards creating larger max tiles in the corner
             corner_bonus = weights['corner_bonus'] * (max_tile / 4.0)
     
-    # Snake pattern bonus (classic 2048 strategy)
+    # Snake pattern bonus - evaluate all 4 corner orientations and take the best
+    # We evaluate snake patterns assuming max tile could be in any of 4 corners:
+    # 1. Upper-left (original board)
+    # 2. Upper-right (flip horizontal)
+    # 3. Lower-left (flip vertical)
+    # 4. Lower-right (flip both)
+    # For each orientation, we evaluate both horizontal and vertical snake patterns
     snake_bonus = 0.0
-    snake_pattern = [
-        board[0, 0], board[0, 1], board[0, 2], board[0, 3],
-        board[1, 3], board[1, 2], board[1, 1], board[1, 0],
-        board[2, 0], board[2, 1], board[2, 2], board[2, 3],
-        board[3, 3], board[3, 2], board[3, 1], board[3, 0]
-    ]
+    scale_factor = 0.15  # Tune this parameter
     
-    # Check if high tiles follow snake pattern
-    non_zero = [x for x in snake_pattern if x > 0]
-    if len(non_zero) >= 2:
-        # Calculate how well tiles follow decreasing pattern
+    def evaluate_snake_pattern(snake_sequence, weight, scale):
+        """Evaluate a snake pattern sequence and return bonus"""
+        non_zero = [x for x in snake_sequence if x > 0]
+        if len(non_zero) < 2:
+            return 0.0
+        
+        bonus = 0.0
         for i in range(len(non_zero) - 1):
             if non_zero[i] >= non_zero[i + 1]:
-                snake_bonus += weights['snake_pattern']
+                val1 = non_zero[i]
+                log_val = np.log2(val1) if val1 > 0 else 0
+                # Scale reward by tile value: larger tiles get exponentially more reward
+                bonus += weight * (1 + scale * log_val)
+        return bonus
+    
+    def get_snake_sequences(transformed_board):
+        """Get horizontal and vertical snake sequences for a transformed board"""
+        # Horizontal snake: Row 0 L→R, Row 1 R→L, Row 2 L→R, Row 3 R→L
+        snake_h = [
+            transformed_board[0, 0], transformed_board[0, 1], transformed_board[0, 2], transformed_board[0, 3],
+            transformed_board[1, 3], transformed_board[1, 2], transformed_board[1, 1], transformed_board[1, 0],
+            transformed_board[2, 0], transformed_board[2, 1], transformed_board[2, 2], transformed_board[2, 3],
+            transformed_board[3, 3], transformed_board[3, 2], transformed_board[3, 1], transformed_board[3, 0]
+        ]
+        # Vertical snake: Col 0 T→B, Col 1 B→T, Col 2 T→B, Col 3 B→T
+        snake_v = [
+            transformed_board[0, 0], transformed_board[1, 0], transformed_board[2, 0], transformed_board[3, 0],
+            transformed_board[3, 1], transformed_board[2, 1], transformed_board[1, 1], transformed_board[0, 1],
+            transformed_board[0, 2], transformed_board[1, 2], transformed_board[2, 2], transformed_board[3, 2],
+            transformed_board[3, 3], transformed_board[2, 3], transformed_board[1, 3], transformed_board[0, 3]
+        ]
+        return snake_h, snake_v
+    
+    # Evaluate all 4 corner orientations
+    bonuses = []
+    
+    # 1. Upper-left (original board)
+    snake_h, snake_v = get_snake_sequences(board)
+    bonuses.append(evaluate_snake_pattern(snake_h, weights['snake_pattern'], scale_factor))
+    bonuses.append(evaluate_snake_pattern(snake_v, weights['snake_pattern'], scale_factor))
+    
+    # 2. Upper-right (flip horizontal)
+    board_flip_h = np.flip(board, axis=1)
+    snake_h, snake_v = get_snake_sequences(board_flip_h)
+    bonuses.append(evaluate_snake_pattern(snake_h, weights['snake_pattern'], scale_factor))
+    bonuses.append(evaluate_snake_pattern(snake_v, weights['snake_pattern'], scale_factor))
+    
+    # 3. Lower-left (flip vertical)
+    board_flip_v = np.flip(board, axis=0)
+    snake_h, snake_v = get_snake_sequences(board_flip_v)
+    bonuses.append(evaluate_snake_pattern(snake_h, weights['snake_pattern'], scale_factor))
+    bonuses.append(evaluate_snake_pattern(snake_v, weights['snake_pattern'], scale_factor))
+    
+    # 4. Lower-right (flip both)
+    board_flip_both = np.flip(np.flip(board, axis=0), axis=1)
+    snake_h, snake_v = get_snake_sequences(board_flip_both)
+    bonuses.append(evaluate_snake_pattern(snake_h, weights['snake_pattern'], scale_factor))
+    bonuses.append(evaluate_snake_pattern(snake_v, weights['snake_pattern'], scale_factor))
+    
+    # Take the maximum bonus from all orientations
+    snake_bonus = max(bonuses) if bonuses else 0.0
     
     # Monotonicity - rewards longer contiguous sequences (strong monotonicity in one direction)
     def mono_score(arr: np.ndarray) -> float:
