@@ -7,23 +7,23 @@ import numpy as np
 from src.game import Game2048
 from src.expectimax import expectimax_best_action_tunable, evaluate_board_tunable, preview_after_move, _format_board
 
-# Current board state from the user's terminal output
+# Current board state from move 304
 board_state = np.array([
-    [1024,    4,    2,    4],
-    [ 512,  128,   16,    2],
-    [  16,   16,    2,    0],
-    [  64,    4,    0,    0]
+    [ 512,   16,    2,    4],
+    [  16,   64,    4,    2],
+    [   8,   16,    8,    2],
+    [   4,    4,    2,    0]
 ])
 
-# Weights from 'ES 2.75 (Best)' config
+# Weights from 'no merge potential' config
 weights = {
     'empty_spaces': 2.75,
     'corner_bonus': 8.0,
     'corner_stability': 2.75,
-    'snake_pattern': 2.0,
-    'monotonicity': 0.5,
+    'snake_pattern': 0.0,
+    'monotonicity': 1.0,
     'smoothness': 0.1,
-    'merge_potential': 0.1,
+    'merge_potential': 0.0,  # No bonus for merge opportunities!
     'max_tile_bonus': 0.0,
     'edge_bonus': 0.0
 }
@@ -108,13 +108,13 @@ print(f"\nEmpty spaces after LEFT:  {empties_left}")
 print(f"Empty spaces after DOWN:  {empties_down}")
 print(f"Difference: {empties_down - empties_left}")
 
-# Check if max tile (1024) stays in corner
-max_tile = 1024
+# Check if max tile stays in corner
+max_tile = np.max(board_state)
 corners_left = [board_after_left[0, 0], board_after_left[0, 3], board_after_left[3, 0], board_after_left[3, 3]]
 corners_down = [board_after_down[0, 0], board_after_down[0, 3], board_after_down[3, 0], board_after_down[3, 3]]
 
-print(f"\nMax tile (1024) in corner after LEFT:  {max_tile in corners_left}")
-print(f"Max tile (1024) in corner after DOWN:  {max_tile in corners_down}")
+print(f"\nMax tile ({max_tile}) in corner after LEFT:  {max_tile in corners_left}")
+print(f"Max tile ({max_tile}) in corner after DOWN:  {max_tile in corners_down}")
 
 # Check merge opportunities
 print("\nMerge opportunities:")

@@ -461,10 +461,8 @@ def chance_value_tunable(b: np.ndarray, d: int, chance_sample_k: int, weights: D
     path_depth = len(path.split('.')) if path else 0
     indent = "  " * path_depth if debug else ""
     
-    # Determine if we should consider both 2 and 4, or just 2
-    max_tile = np.max(b)
-    consider_four = max_tile > 2048  # Only consider spawning 4 in late game
-    tile_options = [(2, 1.0)] if not consider_four else [(2, 0.9), (4, 0.1)]
+    # Always spawn tile value 2 (simplified - not considering 4s for now)
+    tile_value = 2
     
     # If depth is 0, do one spawn step then evaluate
     if d == 0:
@@ -479,19 +477,14 @@ def chance_value_tunable(b: np.ndarray, d: int, chance_sample_k: int, weights: D
         empty_idx = np.random.choice(len(empties))
         r, c = empties[empty_idx]
         
-        # Pick one random tile type (weighted by probability)
-        tile_probs = [p for _, p in tile_options]
-        tile_vals = [tile for tile, _ in tile_options]
-        tile = np.random.choice(tile_vals, p=tile_probs)
-        
         nb = b.copy()
-        nb[r, c] = tile
+        nb[r, c] = tile_value
         
         # Define chance_path for path tracking (used even when debug=False)
         chance_path = f"{path}.C" if path else "C"
         
         if debug:
-            print(f"{indent}[L{d}] {chance_path}: Chance node (depth=0) - Spawning {tile} at position ({r},{c})")
+            print(f"{indent}[L{d}] {chance_path}: Chance node (depth=0) - Spawning {tile_value} at position ({r},{c})")
             print(_format_board(nb))
             print()
         
@@ -508,39 +501,27 @@ def chance_value_tunable(b: np.ndarray, d: int, chance_sample_k: int, weights: D
             print(f"{indent}[L{d}] {chance_path}: Chance node - No empty spaces, evaluating board")
         return evaluate_board_tunable(b, weights, debug=debug, print_board=False, path=path)
     
-    # Use consistent sampling (baseline behavior - no adaptive doubling)
-    num_samples = chance_sample_k
-    
-    # Sample multiple tile spawn outcomes and compute expected value using Monte Carlo
-    # This is the proper expectimax approach: average over sampled outcomes
+    # Enumerate ALL possible outcomes instead of sampling
+    # Always spawn tile value 2 (simplified)
     total_value = 0.0
     num_empty = len(empties)
-    tile_probs = [p for _, p in tile_options]
-    tile_vals = [tile for tile, _ in tile_options]
     
-    # Sample num_samples outcomes and average their values
-    # Each sample represents one possible tile spawn (position + tile type)
-    for _ in range(num_samples):
-        # Pick one random empty position (uniform probability)
-        empty_idx = np.random.choice(num_empty)
+    # Enumerate all possible outcomes: each empty position (always spawn 2)
+    for empty_idx in range(num_empty):
         r, c = empties[empty_idx]
         
-        # Pick one random tile type (weighted by probability: 2 with 0.9, 4 with 0.1 if applicable)
-        tile = np.random.choice(tile_vals, p=tile_probs)
-        
         nb = b.copy()
-        nb[r, c] = tile
+        nb[r, c] = tile_value
         
         # Evaluate this outcome (recursively)
         outcome_value = max_value_tunable(nb, d, chance_sample_k, weights, debug=False, path="")
         total_value += outcome_value
     
-    # Return expected value (Monte Carlo estimate: average of samples)
-    expected_value = total_value / num_samples
+    # Return simple average of all outcomes
+    expected_value = total_value / num_empty if num_empty > 0 else total_value
     if debug:
         chance_path = f"{path}.C" if path else "C"
-        tile_info = f"tile types {tile_vals}"
-        print(f"{indent}[L{d}] {chance_path}: Chance node (depth={d}) - Expected value: {expected_value:.2f} (from {num_samples} samples, {tile_info})")
+        print(f"{indent}[L{d}] {chance_path}: Chance node (depth={d}) - Expected value: {expected_value:.2f} (from {num_empty} outcomes, tile={tile_value})")
     return expected_value
 
 

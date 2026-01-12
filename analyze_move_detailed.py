@@ -9,27 +9,29 @@ from src.expectimax import preview_after_move, _format_board
 
 # Current board state
 board_state = np.array([
-    [1024,    4,    2,    4],
-    [ 512,  128,   16,    2],
-    [  16,   16,    2,    0],
-    [  64,    4,    0,    0]
+    [ 512,   16,    2,    4],
+    [  16,   64,    4,    2],
+    [   8,   16,    8,    2],
+    [   4,    4,    2,    0]
 ])
 
-# Weights from 'ES 2.75 (Best)' config
+# Weights from 'no merge potential' config
 weights = {
     'empty_spaces': 2.75,
     'corner_bonus': 8.0,
     'corner_stability': 2.75,
-    'snake_pattern': 2.0,
-    'monotonicity': 0.5,
+    'snake_pattern': 0.0,
+    'monotonicity': 1.0,
     'smoothness': 0.1,
-    'merge_potential': 0.1,
+    'merge_potential': 0.0,  # No bonus for merge opportunities!
     'max_tile_bonus': 0.0,
     'edge_bonus': 0.0
 }
 
+print(_format_board(board_state))
+
 def analyze_board(board, weights, label):
-    """Break down evaluation components"""
+    """Break down evaluation components - calculates all weight components"""
     print(f"\n{'='*70}")
     print(f"{label}")
     print(f"{'='*70}")
@@ -43,6 +45,68 @@ def analyze_board(board, weights, label):
     corner_bonus = 0.0
     if max_tile > 0 and max_tile in corners:
         corner_bonus = weights['corner_bonus'] * (max_tile / 4.0)
+    
+    # Corner stability penalty
+    corner_stability_penalty = 0.0
+    if weights['corner_stability'] > 0 and max_tile > 0:
+        if max_tile not in corners:
+            corner_stability_penalty = max_tile * weights['corner_stability']
+    
+    # Snake pattern bonus
+    snake_bonus = 0.0
+    snake_pattern = [
+        board[0, 0], board[0, 1], board[0, 2], board[0, 3],
+        board[1, 3], board[1, 2], board[1, 1], board[1, 0],
+        board[2, 0], board[2, 1], board[2, 2], board[2, 3],
+        board[3, 3], board[3, 2], board[3, 1], board[3, 0]
+    ]
+    non_zero = [x for x in snake_pattern if x > 0]
+    if len(non_zero) >= 2:
+        for i in range(len(non_zero) - 1):
+            if non_zero[i] >= non_zero[i + 1]:
+                snake_bonus += weights['snake_pattern']
+    
+    # Monotonicity
+    def mono_score(arr):
+        s = 0.0
+        for r in range(4):
+            row = arr[r, :]
+            seq_length = 0
+            for i in range(3):
+                if row[i] >= row[i + 1] and row[i] > 0:
+                    seq_length += 1
+                    s += seq_length * seq_length
+                else:
+                    seq_length = 0
+        for c in range(4):
+            col = arr[:, c]
+            seq_length = 0
+            for i in range(3):
+                if col[i] >= col[i + 1] and col[i] > 0:
+                    seq_length += 1
+                    s += seq_length * seq_length
+                else:
+                    seq_length = 0
+        return s * weights['monotonicity']
+    
+    monotonicity_score = mono_score(board)
+    
+    # Smoothness
+    def smooth_score(arr):
+        smooth = 0.0
+        for r in range(4):
+            for c in range(3):
+                if arr[r, c] > 0 and arr[r, c + 1] > 0:
+                    diff = abs(np.log2(arr[r, c]) - np.log2(arr[r, c + 1]))
+                    smooth -= diff * weights['smoothness']
+        for c in range(4):
+            for r in range(3):
+                if arr[r, c] > 0 and arr[r + 1, c] > 0:
+                    diff = abs(np.log2(arr[r, c]) - np.log2(arr[r + 1, c]))
+                    smooth -= diff * weights['smoothness']
+        return smooth
+    
+    smoothness_score = smooth_score(board)
     
     # Merge potential
     merge_potential = 0.0
@@ -60,23 +124,81 @@ def analyze_board(board, weights, label):
                 merge_potential += val
                 merge_details.append(f"Col {c}: [{r}]-[{r+1}] = {board[r,c]} (bonus: {val:.2f})")
     
+    # Merge execution bonus (hardcoded in expectimax)
+    merge_execution_bonus = 0.0
+    if max_tile > 0:
+        max_pos = np.unravel_index(np.argmax(board), board.shape)
+        max_r, max_c = max_pos
+        adjacent_positions = [
+            (max_r - 1, max_c), (max_r + 1, max_c),
+            (max_r, max_c - 1), (max_r, max_c + 1)
+        ]
+        for r, c in adjacent_positions:
+            if 0 <= r < 4 and 0 <= c < 4 and board[r, c] > 0:
+                tile_value = board[r, c]
+                bonus = tile_value * 0.1
+                if (r, c) in [(0, 0), (0, 3), (3, 0), (3, 3)]:
+                    bonus *= 1.5
+                merge_execution_bonus += bonus
+    
+    # Max tile bonus
+    max_tile_bonus = 0.0
+    if weights['max_tile_bonus'] > 0:
+        max_tile_bonus = max_tile * weights['max_tile_bonus']
+    
+    # Edge bonus
+    edge_bonus = 0.0
+    if weights['edge_bonus'] > 0:
+        edge_tiles = 0
+        for r in range(4):
+            for c in range(4):
+                if board[r, c] > 0 and (r == 0 or r == 3 or c == 0 or c == 3):
+                    edge_tiles += board[r, c]
+        edge_bonus = edge_tiles * weights['edge_bonus']
+    
+    # Total score
+    total_score = (
+        empty_score +
+        corner_bonus +
+        snake_bonus +
+        monotonicity_score +
+        smoothness_score +
+        merge_potential +
+        merge_execution_bonus +
+        max_tile_bonus +
+        edge_bonus -
+        corner_stability_penalty
+    )
+    
     print(f"\nBoard:")
     print(_format_board(board))
-    print(f"\nEmpty spaces: {empties} × {weights['empty_spaces']} = {empty_score:.2f}")
-    print(f"Corner bonus (max_tile={max_tile}): {corner_bonus:.2f}")
-    print(f"Merge potential: {merge_potential:.2f}")
-    if merge_details:
-        print(f"  Details:")
-        for detail in merge_details:
-            print(f"    {detail}")
-    else:
-        print(f"  (No merge opportunities)")
+    print(f"\nWeight Component Breakdown:")
+    print(f"  Empty spaces ({empties} × {weights['empty_spaces']:.2f}):     {empty_score:8.2f}")
+    print(f"  Corner bonus:                              {corner_bonus:8.2f}")
+    print(f"  Corner stability penalty:                  {-corner_stability_penalty:8.2f}")
+    print(f"  Snake pattern:                             {snake_bonus:8.2f}")
+    print(f"  Monotonicity:                              {monotonicity_score:8.2f}")
+    print(f"  Smoothness:                                {smoothness_score:8.2f}")
+    print(f"  Merge potential:                           {merge_potential:8.2f}")
+    print(f"  Merge execution bonus:                     {merge_execution_bonus:8.2f}")
+    print(f"  Max tile bonus:                            {max_tile_bonus:8.2f}")
+    print(f"  Edge bonus:                                {edge_bonus:8.2f}")
+    print(f"  {'─'*60}")
+    print(f"  TOTAL SCORE:                               {total_score:8.2f}")
     
     return {
         'empties': empties,
         'empty_score': empty_score,
         'corner_bonus': corner_bonus,
+        'corner_stability_penalty': corner_stability_penalty,
+        'snake_bonus': snake_bonus,
+        'monotonicity_score': monotonicity_score,
+        'smoothness_score': smoothness_score,
         'merge_potential': merge_potential,
+        'merge_execution_bonus': merge_execution_bonus,
+        'max_tile_bonus': max_tile_bonus,
+        'edge_bonus': edge_bonus,
+        'total_score': total_score,
     }
 
 # Simulate LEFT
@@ -101,45 +223,44 @@ down_stats = analyze_board(board_down, weights, "DOWN MOVE")
 print(f"\n{'='*70}")
 print("COMPARISON")
 print(f"{'='*70}")
-print(f"\nEmpty spaces:")
-print(f"  LEFT: {left_stats['empties']} → {left_stats['empty_score']:.2f} points")
-print(f"  DOWN: {down_stats['empties']} → {down_stats['empty_score']:.2f} points")
-print(f"  Difference (LEFT advantage): {left_stats['empty_score'] - down_stats['empty_score']:.2f}")
 
-print(f"\nCorner bonus:")
-print(f"  LEFT: {left_stats['corner_bonus']:.2f} points")
-print(f"  DOWN: {down_stats['corner_bonus']:.2f} points")
-print(f"  Difference: {down_stats['corner_bonus'] - left_stats['corner_bonus']:.2f}")
+comparison = [
+    ('Empty spaces', 'empty_score', 'points'),
+    ('Corner bonus', 'corner_bonus', 'points'),
+    ('Corner stability penalty', 'corner_stability_penalty', 'points'),
+    ('Snake pattern', 'snake_bonus', 'points'),
+    ('Monotonicity', 'monotonicity_score', 'points'),
+    ('Smoothness', 'smoothness_score', 'points'),
+    ('Merge potential', 'merge_potential', 'points'),
+    ('Merge execution bonus', 'merge_execution_bonus', 'points'),
+    ('Max tile bonus', 'max_tile_bonus', 'points'),
+    ('Edge bonus', 'edge_bonus', 'points'),
+    ('TOTAL SCORE', 'total_score', 'points'),
+]
 
-print(f"\nMerge potential:")
-print(f"  LEFT: {left_stats['merge_potential']:.2f} points")
-print(f"  DOWN: {down_stats['merge_potential']:.2f} points")
-print(f"  Difference (DOWN advantage): {down_stats['merge_potential'] - left_stats['merge_potential']:.2f}")
+print(f"\n{'Component':<30} {'LEFT':>12} {'DOWN':>12} {'Difference':>12}")
+print(f"{'─'*30} {'─'*12} {'─'*12} {'─'*12}")
 
-net_empty = left_stats['empty_score'] - down_stats['empty_score']
-net_merge = down_stats['merge_potential'] - left_stats['merge_potential']
-net_total = net_merge - net_empty
+for label, key, unit in comparison:
+    left_val = left_stats.get(key, 0.0)
+    down_val = down_stats.get(key, 0.0)
+    diff = down_val - left_val
+    print(f"{label:<30} {left_val:>12.2f} {down_val:>12.2f} {diff:>12.2f}")
 
 print(f"\n{'='*70}")
-print("KEY INSIGHT")
+print("CHOSEN DIRECTION: DOWN")
 print(f"{'='*70}")
-print(f"\nLEFT advantage (empty spaces): +{net_empty:.2f}")
-print(f"DOWN advantage (merge potential): +{net_merge:.2f}")
-print(f"Net (merge - empty): {net_total:.2f}")
-
-print(f"\n⚠️  However, note that expectimax looks ahead 2 moves (depth=2).")
-print(f"   The evaluation shown above is just the terminal evaluation.")
-print(f"   Expectimax also considers what happens after random tile spawns,")
-print(f"   which might favor DOWN's merge opportunities over LEFT's immediate merge.")
-
-print(f"\n📝 Your intuition (LEFT to merge the two 16s) is valid - you get:")
-print(f"   - Immediate 32 tile (concrete gain)")
-print(f"   - +1 empty space (3 vs 2)")
-print(f"   - But fewer future merge opportunities")
-
-print(f"\n🤖 AI's reasoning (DOWN):")
-print(f"   - Preserves more merge opportunities (3 vs 0)")
-print(f"   - Creates potential for multiple merges next turn")
-print(f"   - But loses 1 empty space")
-print(f"   - The lookahead calculation suggests DOWN leads to better future states")
+print(f"\nAll weight component values for DOWN direction:\n")
+print(f"  Empty spaces ({down_stats['empties']} × {weights['empty_spaces']:.2f}):     {down_stats['empty_score']:8.2f}")
+print(f"  Corner bonus:                              {down_stats['corner_bonus']:8.2f}")
+print(f"  Corner stability penalty:                  {-down_stats['corner_stability_penalty']:8.2f}")
+print(f"  Snake pattern:                             {down_stats['snake_bonus']:8.2f}")
+print(f"  Monotonicity:                              {down_stats['monotonicity_score']:8.2f}")
+print(f"  Smoothness:                                {down_stats['smoothness_score']:8.2f}")
+print(f"  Merge potential:                           {down_stats['merge_potential']:8.2f}")
+print(f"  Merge execution bonus:                     {down_stats['merge_execution_bonus']:8.2f}")
+print(f"  Max tile bonus:                            {down_stats['max_tile_bonus']:8.2f}")
+print(f"  Edge bonus:                                {down_stats['edge_bonus']:8.2f}")
+print(f"  {'─'*60}")
+print(f"  TOTAL SCORE:                               {down_stats['total_score']:8.2f}")
 

@@ -86,17 +86,29 @@ CONFIGS = {
         'max_tile_bonus': 0.0,
         'edge_bonus': 0.0
     },
-        'ES 2.75 (no merge potential)': {
+    'no merge potential': {
         'empty_spaces': 2.75,
         'corner_bonus': 8.0,
         'corner_stability': 2.75,
-        'snake_pattern': 2.0,
-        'monotonicity': 0.5,
+        'snake_pattern': 0.0,
+        'monotonicity': 1.0,
         'smoothness': 0.1,
         'merge_potential': 0.0,
         'max_tile_bonus': 0.0,
         'edge_bonus': 0.0
     },
+    'snake_enabled': {
+        'empty_spaces': 2.75,
+        'corner_bonus': 8.0,
+        'corner_stability': 2.75,
+        'snake_pattern': 1.0,
+        'monotonicity': 0.0,
+        'smoothness': 0.1,
+        'merge_potential': 0.0,
+        'max_tile_bonus': 0.0,
+        'edge_bonus': 0.0
+    },
+
 }
 
 def main():
