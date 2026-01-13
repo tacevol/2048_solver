@@ -21,6 +21,7 @@ DEFAULT_WEIGHTS = {
     'merge_potential': 0.1,   # Bonus for immediate merge opportunities
     'max_tile_bonus': 0.0,    # Bonus for having high tiles (0 = disabled)
     'edge_bonus': 0.0,        # Bonus for tiles on edges (0 = disabled)
+    'risk_aversion': 0.0,     # Risk penalty weight (higher = more risk-averse, 0 = disabled)
 }
 
 def get_valid_action_mask_for_board(board: np.ndarray) -> np.ndarray:
@@ -185,10 +186,11 @@ def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, 
     # 4. Lower-right (flip both)
     # For each orientation, we evaluate both horizontal and vertical snake patterns
     snake_bonus = 0.0
-    scale_factor = 0.15  # Tune this parameter
+    scale_factor = 0.3  # Tune this parameter
     
     def evaluate_snake_pattern(snake_sequence, weight, scale):
-        """Evaluate a snake pattern sequence and return bonus"""
+        """Evaluate a snake pattern sequence and return bonus
+        Stops accumulating as soon as the chain is broken (first non-decreasing pair)"""
         non_zero = [x for x in snake_sequence if x > 0]
         if len(non_zero) < 2:
             return 0.0
@@ -200,6 +202,9 @@ def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, 
                 log_val = np.log2(val1) if val1 > 0 else 0
                 # Scale reward by tile value: larger tiles get exponentially more reward
                 bonus += weight * (1 + scale * log_val)
+            else:
+                # Chain is broken - stop accumulating rewards
+                break
         return bonus
     
     def get_snake_sequences(transformed_board):
@@ -355,6 +360,27 @@ def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, 
             # Penalize if max_tile is not in a corner
             corner_stability_penalty = max_tile * weights['corner_stability']
     
+    # Risk assessment - penalize dangerous board states (risk-averse evaluation)
+    # This makes the AI prefer safer moves over risky high-reward moves
+    risk_penalty = 0.0
+    if 'risk_aversion' in weights and weights['risk_aversion'] > 0:
+        # Penalize boards with few empty spaces (high risk of getting stuck)
+        if empties <= 2:
+            risk_penalty += weights['risk_aversion'] * (3 - empties) * 10.0  # Heavy penalty for 0-2 empties
+        elif empties <= 4:
+            risk_penalty += weights['risk_aversion'] * (5 - empties) * 2.0   # Moderate penalty for 3-4 empties
+        
+        # Penalize if max tile is not in corner (risky positioning)
+        if max_tile > 0:
+            corners = [board[0, 0], board[0, 3], board[3, 0], board[3, 3]]
+            if max_tile not in corners:
+                risk_penalty += weights['risk_aversion'] * max_tile * 0.5  # Additional risk for max tile not in corner
+        
+        # Penalize boards with few legal moves (high risk of getting stuck)
+        num_legal_moves = np.sum(valid_mask)
+        if num_legal_moves <= 2:
+            risk_penalty += weights['risk_aversion'] * (3 - num_legal_moves) * 5.0  # Penalty for limited moves
+    
     # Weighted combination
     score = (
         empties * weights['empty_spaces'] +     # Empty spaces
@@ -366,7 +392,8 @@ def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, 
         merge_execution_bonus +                 # Merge execution bonus (reward completed merges)
         max_tile_bonus +                        # Max tile bonus
         edge_bonus -                            # Edge bonus
-        corner_stability_penalty                # Corner stability penalty (subtracted)
+        corner_stability_penalty -               # Corner stability penalty (subtracted)
+        risk_penalty                            # Risk penalty (subtracted) - makes AI more risk-averse
     )
     
     if debug:

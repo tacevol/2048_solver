@@ -40,7 +40,8 @@ CONFIGS = {
         'smoothness': 0.1,
         'merge_potential': 0.0,
         'max_tile_bonus': 0.0,
-        'edge_bonus': 0.0
+        'edge_bonus': 0.0,
+        'risk_aversion': 0.5,
     },
 
 }
