@@ -190,18 +190,22 @@ def evaluate_board_tunable(board: np.ndarray, weights: Dict[str, float] = None, 
     
     def evaluate_snake_pattern(snake_sequence, weight, scale):
         """Evaluate a snake pattern sequence and return bonus
-        Stops accumulating as soon as the chain is broken (first non-decreasing pair)"""
-        non_zero = [x for x in snake_sequence if x > 0]
-        if len(non_zero) < 2:
+        Stops accumulating as soon as the chain is broken (first non-decreasing pair)
+        Zeros are included in the sequence evaluation"""
+        if len(snake_sequence) < 2:
             return 0.0
         
         bonus = 0.0
-        for i in range(len(non_zero) - 1):
-            if non_zero[i] >= non_zero[i + 1]:
-                val1 = non_zero[i]
-                log_val = np.log2(val1) if val1 > 0 else 0
-                # Scale reward by tile value: larger tiles get exponentially more reward
-                bonus += weight * (1 + scale * log_val)
+        for i in range(len(snake_sequence) - 1):
+            val1 = snake_sequence[i]
+            val2 = snake_sequence[i + 1]
+            if val1 >= val2:
+                # Only add bonus if val1 > 0 (can't take log2(0))
+                if val1 > 0:
+                    log_val = np.log2(val1)
+                    # Scale reward by tile value: larger tiles get exponentially more reward
+                    bonus += weight * (1 + scale * log_val)
+                # If val1 == 0, we still continue (0 >= val2 is valid for val2 == 0)
             else:
                 # Chain is broken - stop accumulating rewards
                 break

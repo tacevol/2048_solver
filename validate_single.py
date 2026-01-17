@@ -32,7 +32,20 @@ CONFIGS = {
         'max_tile_bonus': 0.0,
         'edge_bonus': 0.0
     },
-    
+
+    'risk 0.2': {
+        'empty_spaces': 2.75,
+        'corner_bonus': 8.0,
+        'corner_stability': 2.75,
+        'snake_pattern': 1.0,
+        'monotonicity': 0.0,
+        'smoothness': 0.1,
+        'merge_potential': 0.0,
+        'max_tile_bonus': 0.0,
+        'edge_bonus': 0.0,
+        'risk_aversion': 0.2,
+    },
+
     'risk 0.5': {
         'empty_spaces': 2.75,
         'corner_bonus': 8.0,
@@ -44,6 +57,19 @@ CONFIGS = {
         'max_tile_bonus': 0.0,
         'edge_bonus': 0.0,
         'risk_aversion': 0.5,
+    },
+
+    'risk 0.35': {
+        'empty_spaces': 2.75,
+        'corner_bonus': 8.0,
+        'corner_stability': 2.75,
+        'snake_pattern': 1.0,
+        'monotonicity': 0.0,
+        'smoothness': 0.1,
+        'merge_potential': 0.0,
+        'max_tile_bonus': 0.0,
+        'edge_bonus': 0.0,
+        'risk_aversion': 0.35,
     },
 
     'risk 0.25': {

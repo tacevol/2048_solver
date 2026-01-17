@@ -5,17 +5,17 @@ Detailed analysis of move evaluation components
 
 import numpy as np
 from src.game import Game2048
-from src.expectimax import preview_after_move, _format_board
+from src.expectimax import preview_after_move, _format_board, expectimax_best_action_tunable
 
-# Current board state from move 517
+# Current board state from move 833 (risk 0.8 config)
 board_state = np.array([
-    [   0,    0,    0, 1024],
-    [   0,    0,    4,   64],
-    [   0,    0,    0,   64],
-    [   0,    2,    8,    2]
+    [   2,    0,    0,   64],
+    [   0,    0,   16,  128],
+    [   0,    4,   32,  512],
+    [   2,    2,   64, 1024]
 ])
 
-# Weights from 'snake_enabled' config
+# Weights from 'risk 0.8' config
 weights = {
     'empty_spaces': 2.75,
     'corner_bonus': 8.0,
@@ -25,7 +25,8 @@ weights = {
     'smoothness': 0.1,
     'merge_potential': 0.0,
     'max_tile_bonus': 0.0,
-    'edge_bonus': 0.0
+    'edge_bonus': 0.0,
+    'risk_aversion': 0.8,
 }
 
 # Snake pattern scale factor (from expectimax.py - updated to 0.3)
@@ -243,6 +244,42 @@ def analyze_board(board, weights, label):
                     edge_tiles += board[r, c]
         edge_bonus = edge_tiles * weights['edge_bonus']
     
+    # Risk penalty
+    risk_penalty = 0.0
+    risk_details = []
+    if 'risk_aversion' in weights and weights['risk_aversion'] > 0:
+        # Get valid moves for risk calculation
+        from src.expectimax import get_valid_action_mask_for_board
+        valid_mask = get_valid_action_mask_for_board(board)
+        num_legal_moves = np.sum(valid_mask)
+        
+        # Penalize boards with few empty spaces
+        if empties <= 2:
+            penalty = weights['risk_aversion'] * (3 - empties) * 10.0
+            risk_penalty += penalty
+            risk_details.append(f"Few empty spaces ({empties} ≤ 2): {penalty:.2f}")
+        elif empties <= 4:
+            penalty = weights['risk_aversion'] * (5 - empties) * 2.0
+            risk_penalty += penalty
+            risk_details.append(f"Few empty spaces ({empties} ≤ 4): {penalty:.2f}")
+        
+        # Penalize if max tile is not in corner
+        if max_tile > 0:
+            corners = [board[0, 0], board[0, 3], board[3, 0], board[3, 3]]
+            if max_tile not in corners:
+                penalty = weights['risk_aversion'] * max_tile * 0.5
+                risk_penalty += penalty
+                risk_details.append(f"Max tile ({max_tile}) not in corner: {penalty:.2f}")
+        
+        # Penalize boards with few legal moves
+        if num_legal_moves <= 2:
+            penalty = weights['risk_aversion'] * (3 - num_legal_moves) * 5.0
+            risk_penalty += penalty
+            risk_details.append(f"Few legal moves ({num_legal_moves} ≤ 2): {penalty:.2f}")
+        
+        if not risk_details:
+            risk_details.append("No risk penalties applied")
+    
     # Total score
     total_score = (
         empty_score +
@@ -254,7 +291,8 @@ def analyze_board(board, weights, label):
         merge_execution_bonus +
         max_tile_bonus +
         edge_bonus -
-        corner_stability_penalty
+        corner_stability_penalty -
+        risk_penalty
     )
     
     print(f"\nBoard:")
@@ -292,6 +330,11 @@ def analyze_board(board, weights, label):
     print(f"  Merge execution bonus:                     {merge_execution_bonus:8.2f}")
     print(f"  Max tile bonus:                            {max_tile_bonus:8.2f}")
     print(f"  Edge bonus:                                {edge_bonus:8.2f}")
+    print(f"  Risk penalty (risk_aversion={weights.get('risk_aversion', 0.0):.2f}):              {-risk_penalty:8.2f}")
+    if risk_details:
+        print(f"    Risk details:")
+        for detail in risk_details:
+            print(f"      - {detail}")
     print(f"  {'─'*60}")
     print(f"  TOTAL SCORE:                               {total_score:8.2f}")
     
@@ -307,6 +350,7 @@ def analyze_board(board, weights, label):
         'merge_execution_bonus': merge_execution_bonus,
         'max_tile_bonus': max_tile_bonus,
         'edge_bonus': edge_bonus,
+        'risk_penalty': risk_penalty,
         'total_score': total_score,
     }
 
@@ -332,12 +376,12 @@ game_down.move('down')
 board_down = game_down.board.copy()
 
 print("\n" + "="*70)
-print("WHY DID AI CHOOSE LEFT? (Human prefers UP to merge 64s in right column)")
+print("WHY DID AI CHOOSE RIGHT? (Human prefers UP to connect 16 to 64 in top right)")
 print("="*70)
 
-left_stats = analyze_board(board_left, weights, "LEFT MOVE (AI CHOSE)")
-right_stats = analyze_board(board_right, weights, "RIGHT MOVE")
-up_stats = analyze_board(board_up, weights, "UP MOVE (HUMAN PREFERENCE)")
+left_stats = analyze_board(board_left, weights, "LEFT MOVE")
+right_stats = analyze_board(board_right, weights, "RIGHT MOVE (AI CHOSE)")
+up_stats = analyze_board(board_up, weights, "UP MOVE (HUMAN PREFERENCE - connects 16 to 64)")
 down_stats = analyze_board(board_down, weights, "DOWN MOVE")
 
 print(f"\n{'='*70}")
@@ -355,6 +399,7 @@ comparison = [
     ('Merge execution bonus', 'merge_execution_bonus', 'points'),
     ('Max tile bonus', 'max_tile_bonus', 'points'),
     ('Edge bonus', 'edge_bonus', 'points'),
+    ('Risk penalty', 'risk_penalty', 'points'),
     ('TOTAL SCORE', 'total_score', 'points'),
 ]
 
@@ -366,56 +411,81 @@ for label, key, unit in comparison:
     right_val = right_stats.get(key, 0.0)
     up_val = up_stats.get(key, 0.0)
     down_val = down_stats.get(key, 0.0)
-    print(f"{label:<30} {left_val:>12.2f} {right_val:>12.2f} {up_val:>12.2f} {down_val:>12.2f}")
+    # Show risk penalty as positive (since it's subtracted)
+    if key == 'risk_penalty':
+        print(f"{label:<30} {left_val:>12.2f} {right_val:>12.2f} {up_val:>12.2f} {down_val:>12.2f} (higher = more risky)")
+    else:
+        print(f"{label:<30} {left_val:>12.2f} {right_val:>12.2f} {up_val:>12.2f} {down_val:>12.2f}")
 
 print(f"\n{'='*70}")
-print("CHOSEN DIRECTION: LEFT")
+print("CHOSEN DIRECTION: RIGHT")
 print(f"{'='*70}")
-print(f"\nAll weight component values for LEFT direction:\n")
-print(f"  Empty spaces ({left_stats['empties']} × {weights['empty_spaces']:.2f}):     {left_stats['empty_score']:8.2f}")
-print(f"  Corner bonus:                              {left_stats['corner_bonus']:8.2f}")
-print(f"  Corner stability penalty:                  {-left_stats['corner_stability_penalty']:8.2f}")
-print(f"  Snake pattern:                             {left_stats['snake_bonus']:8.2f}")
-print(f"  Monotonicity:                              {left_stats['monotonicity_score']:8.2f}")
-print(f"  Smoothness:                                {left_stats['smoothness_score']:8.2f}")
-print(f"  Merge potential:                           {left_stats['merge_potential']:8.2f}")
-print(f"  Merge execution bonus:                     {left_stats['merge_execution_bonus']:8.2f}")
-print(f"  Max tile bonus:                            {left_stats['max_tile_bonus']:8.2f}")
-print(f"  Edge bonus:                                {left_stats['edge_bonus']:8.2f}")
+print(f"\nAll weight component values for RIGHT direction:\n")
+print(f"  Empty spaces ({right_stats['empties']} × {weights['empty_spaces']:.2f}):     {right_stats['empty_score']:8.2f}")
+print(f"  Corner bonus:                              {right_stats['corner_bonus']:8.2f}")
+print(f"  Corner stability penalty:                  {-right_stats['corner_stability_penalty']:8.2f}")
+print(f"  Snake pattern:                             {right_stats['snake_bonus']:8.2f}")
+print(f"  Monotonicity:                              {right_stats['monotonicity_score']:8.2f}")
+print(f"  Smoothness:                                {right_stats['smoothness_score']:8.2f}")
+print(f"  Merge potential:                           {right_stats['merge_potential']:8.2f}")
+print(f"  Merge execution bonus:                     {right_stats['merge_execution_bonus']:8.2f}")
+print(f"  Max tile bonus:                            {right_stats['max_tile_bonus']:8.2f}")
+print(f"  Edge bonus:                                {right_stats['edge_bonus']:8.2f}")
+print(f"  Risk penalty:                              {right_stats['risk_penalty']:8.2f}")
 print(f"  {'─'*60}")
-print(f"  TOTAL SCORE:                               {left_stats['total_score']:8.2f}")
+print(f"  TOTAL SCORE:                               {right_stats['total_score']:8.2f}")
 
 print(f"\n{'='*70}")
-print("COMPARISON: LEFT vs DOWN vs UP vs RIGHT")
+print("COMPARISON: RIGHT vs UP vs LEFT vs DOWN")
 print(f"{'='*70}")
-print(f"\nLEFT advantage over DOWN:  {left_stats['total_score'] - down_stats['total_score']:+.2f}")
-print(f"LEFT advantage over UP:    {left_stats['total_score'] - up_stats['total_score']:+.2f}")
-print(f"LEFT advantage over RIGHT:  {left_stats['total_score'] - right_stats['total_score']:+.2f}")
-print(f"DOWN advantage over UP:     {down_stats['total_score'] - up_stats['total_score']:+.2f}")
-print(f"\nHuman preference: UP (to merge the two 64s in right column, creating 128)")
-print(f"AI chose: LEFT (score: {left_stats['total_score']:.2f})")
-print(f"UP score:   {up_stats['total_score']:.2f} (difference: {up_stats['total_score'] - left_stats['total_score']:+.2f})")
-print(f"DOWN score: {down_stats['total_score']:.2f} (difference: {down_stats['total_score'] - left_stats['total_score']:+.2f})")
-print(f"RIGHT score: {right_stats['total_score']:.2f} (difference: {right_stats['total_score'] - left_stats['total_score']:+.2f})")
+print(f"\nRIGHT advantage over UP:    {right_stats['total_score'] - up_stats['total_score']:+.2f}")
+print(f"RIGHT advantage over LEFT:   {right_stats['total_score'] - left_stats['total_score']:+.2f}")
+print(f"RIGHT advantage over DOWN:   {right_stats['total_score'] - down_stats['total_score']:+.2f}")
+print(f"UP advantage over LEFT:      {up_stats['total_score'] - left_stats['total_score']:+.2f}")
+print(f"UP advantage over DOWN:      {up_stats['total_score'] - down_stats['total_score']:+.2f}")
+print(f"\nHuman preference: UP (to connect 16 to 64 in top right, improving snake pattern)")
+print(f"AI chose: RIGHT (score: {right_stats['total_score']:.2f})")
+print(f"UP score:   {up_stats['total_score']:.2f} (difference: {up_stats['total_score'] - right_stats['total_score']:+.2f})")
+print(f"LEFT score: {left_stats['total_score']:.2f} (difference: {left_stats['total_score'] - right_stats['total_score']:+.2f})")
+print(f"DOWN score: {down_stats['total_score']:.2f} (difference: {down_stats['total_score'] - right_stats['total_score']:+.2f})")
 
 print(f"\n{'='*70}")
 print("KEY INSIGHTS")
 print(f"{'='*70}")
 print(f"\n1. IMMEDIATE EVALUATION (shown above):")
-print(f"   - Current board has two 64s in right column (rows 2 and 3)")
-print(f"   - UP would merge them to create 128, improving the right column pattern")
-print(f"   - LEFT merges the 2s in bottom row, creating a 4")
+print(f"   - Current board: 16 at [1,2], 64 at [0,3]")
+print(f"   - UP would move 16 up to connect with 64 in top right, improving snake pattern")
+print(f"   - RIGHT merges the 2s in bottom row, creating a 4")
 print(f"\n2. EXPECTIMAX LOOKAHEAD (depth=2):")
 print(f"   - AI evaluates: move → spawn → move → evaluate")
-print(f"   - LEFT might score better after considering future tile spawns")
-print(f"   - But UP creates immediate value (128) and improves pattern")
+print(f"   - RIGHT might score better after considering future tile spawns")
+print(f"   - Need to run with debug=True to see the full expectimax tree")
 print(f"\n3. SNAKE PATTERN ANALYSIS:")
-print(f"   - With chain-breaking logic, snake pattern stops at first violation")
-print(f"   - Need to check which move creates better snake patterns")
-print(f"   - UP merges 64s → creates 128 in right column")
-print(f"   - LEFT merges 2s → creates 4, may break patterns")
-print(f"\n4. KEY QUESTION:")
-print(f"   - Why does LEFT score higher than UP?")
-print(f"   - Check empty spaces, corner bonus, snake pattern, merge execution bonus")
-print(f"   - The difference might be in how expectimax looks ahead")
+print(f"   - UP would create: 16 moves to [0,2], connecting with 64 at [0,3]")
+print(f"   - This creates a better snake pattern in the top row")
+print(f"   - RIGHT merges 2s but doesn't improve the snake pattern as much")
+print(f"\n4. RISK AVERSION IMPACT:")
+print(f"   - Risk penalty: {right_stats.get('risk_penalty', 0.0):.2f} for RIGHT, {up_stats.get('risk_penalty', 0.0):.2f} for UP")
+print(f"   - Higher risk penalty = more dangerous board state")
+print(f"   - With risk_aversion=0.8, risky moves are heavily penalized")
+print(f"\n5. KEY QUESTION:")
+print(f"   - Why does RIGHT score higher than UP?")
+print(f"   - Check: empty spaces, risk penalty, snake pattern, expectimax lookahead")
+print(f"   - The difference might be in risk assessment or expectimax lookahead")
+
+print(f"\n{'='*70}")
+print("EXPECTIMAX DECISION (depth=2, chance_samples=8)")
+print(f"{'='*70}")
+chosen_action = expectimax_best_action_tunable(
+    board_state,
+    depth=2,
+    chance_sample_k=8,
+    weights=weights,
+    debug=False
+)
+
+directions = ['UP', 'DOWN', 'LEFT', 'RIGHT']
+print(f"\nExpectimax chooses: {directions[chosen_action]}")
+print(f"Expected score difference explains why {directions[chosen_action]} was chosen")
+print(f"\nTo see full decision tree, modify script to use debug=True")
 
