@@ -122,16 +122,17 @@ class Game2048:
         # Check each row for possible moves
         for r in range(self.n):
             row = vboard[r]
-            # Check for slides (zeros before non-zeros)
-            non_zero_indices = np.where(row != 0)[0]
-            if len(non_zero_indices) > 0:
-                # Check if there are zeros before the first non-zero
-                if non_zero_indices[0] > 0:
+            # Check for slides (any zero before a non-zero later in the row)
+            seen_zero = False
+            for val in row:
+                if val == 0:
+                    seen_zero = True
+                elif seen_zero:
                     return True
-                # Check for merges (adjacent equal values)
-                for i in range(len(non_zero_indices) - 1):
-                    if row[non_zero_indices[i]] == row[non_zero_indices[i + 1]]:
-                        return True
+            # Check for merges (adjacent equal values)
+            for i in range(self.n - 1):
+                if row[i] != 0 and row[i] == row[i + 1]:
+                    return True
         return False
 
     def is_game_over(self) -> bool:
